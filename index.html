@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visor GPX Offline</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-gpx@1.5.1/gpx.js"></script>
+    <link rel="manifest" href="manifest.json">
+    <style>
+        /* Aseguramos que el mapa ocupa toda la pantalla */
+        #map {
+            width: 100%;
+            height: 100vh;
+            margin: 0;
+            padding: 0;
+        }
+        /* Estilo para el input de archivo */
+        #fileInput {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 1000; /* Asegura que el input esté por encima del mapa */
+        }
+        /* Estilo para el mensaje de error */
+        #error-message {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            background-color: rgba(255, 0, 0, 0.7);
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+            z-index: 1000;
+        }
+    </style>
+</head>
+<body>
+    <input type="file" id="fileInput" accept=".gpx">
+    <div id="map"></div>
+    <div id="error-message" style="display:none;"></div>
+
+    <script>
+        // Inicializar el mapa
+        var map = L.map('map').setView([0, 0], 8); // Coordenadas iniciales centradas en 0,0
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        }).addTo(map);
+
+        var userLocationMarker = null; // Variable para almacenar el marcador de la ubicación del usuario
+        var gpxLayer = null; // Variable para almacenar la capa GPX
+
+        // Función para manejar errores y mostrar mensajes al usuario
+        function showError(message) {
+            var errorMessageElement = document.getElementById('error-message');
+            errorMessageElement.textContent = message;
+            errorMessageElement.style.display = 'block';
+            setTimeout(function() {
+                errorMessageElement.style.display = 'none'; // Oculta el mensaje después de 5 segundos
+            }, 5000);
+            console.error(message); // También loguea el error en la consola para desarrollo
+        }
+
+        // Función para manejar la carga del archivo GPX
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            // Verificar si es un archivo GPX
+            if (file.name.toLowerCase().endsWith('.gpx')) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    try {
+                        // Parsear el archivo GPX y mostrar la ruta en el mapa
+                        if (gpxLayer) {
+                            map.removeLayer(gpxLayer); // Elimina la capa anterior si existe
+                        }
+                        gpxLayer = new L.GPX(e.target.result, {
+                            async: true, // Carga el archivo de forma asíncrona
+                            polyline: { color: 'red' }, // Estilo de la línea de la ruta
+                            marker_options: {
+                                startIconUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon-start.png', // Icono de inicio
+                                endIconUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon-end.png',   // Icono de fin
+                                shadowUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-shadow.png'    // Sombra del marcador
+                            }
+                        }).addTo(map);
+
+                        gpxLayer.on('loaded', function(e) {
+                            map.fitBounds(e.target.getBounds()); // Ajusta la vista del mapa a la ruta
+                        });
+                    } catch (error) {
+                        showError('Error al procesar el archivo GPX: ' + error.message);
+                    }
+                };
+                reader.onerror = function() {
+                    showError('Error al leer el archivo GPX.');
+                };
+                reader.readAsText(file); // Lee el contenido del archivo como texto
+            } else {
+                showError('Por favor, selecciona un archivo GPX válido.');
+            }
+            // Resetea el input para que el mismo archivo pueda ser seleccionado de nuevo.
+            event.target.value = '';
+        }
+
+        // Función para obtener y mostrar la ubicación del usuario
+        function getLocation() {
+            if (navigator.geolocation) {
+                navigator.geolocation.watchPosition(
+                    function(position) {
+                        // Éxito al obtener la ubicación
+                        const lat = position.coords.latitude;
+                        const lng = position.coords.longitude;
+
+                        if (userLocationMarker) {
+                            userLocationMarker.setLatLng([lat, lng]); // Actualiza la posición del marcador
+                        } else {
+                            // Crea el marcador de la ubicación del usuario si no existe
+                            userLocationMarker = L.marker([lat, lng]).addTo(map);
+                            userLocationMarker.bindPopup("Tu ubicación").openPopup(); // Añade un popup
+                        }
+                    },
+                    function(error) {
+                        // Manejar errores de geolocalización
+                        let errorMessage = 'Error al obtener la ubicación: ';
+                        switch (error.code) {
+                            case error.PERMISSION_DENIED:
+                                errorMessage += 'Permiso denegado por el usuario.';
+                                break;
+                            case error.POSITION_UNAVAILABLE:
+                                errorMessage += 'Información de ubicación no disponible.';
+                                break;
+                            case error.TIMEOUT:
+                                errorMessage += 'Tiempo de espera agotado.';
+                                break;
+                            case error.UNKNOWN_ERROR:
+                                errorMessage += 'Error desconocido.';
+                                break;
+                        }
+                        showError(errorMessage);
+                    },
+                    {
+                        enableHighAccuracy: true, // Intenta obtener la ubicación más precisa posible
+                        timeout: 10000,           // Tiempo máximo para esperar una respuesta (10 segundos)
+                        maximumAge: 0             // No usar caché, siempre obtener la ubicación actual
+                    }
+                );
+            } else {
+                showError('Geolocalización no soportada por este navegador.');
+            }
+        }
+
+        // Event listeners
+        document.getElementById('fileInput').addEventListener('change', handleFileSelect);
+        window.onload = getLocation; // Obtener la ubicación del usuario al cargar la página
+
+
+        // Service Worker para funcionalidad offline
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/service-worker.js')
+                .then(function(registration) {
+                    console.log('Service Worker registrado con éxito:', registration);
+                })
+                .catch(function(error) {
+                    console.log('Error al registrar el Service Worker:', error);
+                });
+        }
+    </script>
+</body>
+</html>
